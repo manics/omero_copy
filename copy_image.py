@@ -3,6 +3,7 @@
 import logging
 
 import omero
+from omero.rtypes import wrap
 
 
 #logging.basicConfig()
@@ -31,7 +32,7 @@ def copy_set_get(a, b, include=[], exclude=[]):
         fields = set(include).difference(set(exclude))
     else:
         fields = inter.difference(set(exclude))
-        diff = union.difference(inter)
+        diff = union.difference(inter).difference(set(exclude))
         if 'Details' in diff:
             diff.remove('Details')
         if diff:
@@ -57,7 +58,7 @@ def copy_set_get(a, b, include=[], exclude=[]):
             log.error('Call %s failed: %s', m, e)
 
 
-def copy_image(im, conn):
+def copy_image_and_metadata(im, conn):
     """
     Copy an image
     im: The image
@@ -76,32 +77,59 @@ def copy_image(im, conn):
 
     newim = conn.createImageFromNumpySeq(
         planeGen(), im.getName(), sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT)
+
+    #qs = conn.getQueryService()
+    #px = qs.get('Pixels', newim.getPrimaryPixels().id)
+
+    #params = omero.sys.Parameters()
+    #params.map = { 'id': wrap(px.id) }
+    #channels = qs.findAllByQuery(
+    #    "SELECT c from Channel c "
+    #    "join fetch c.pixels as p "
+    #    "where p.id = :id", params)
+
+    us = conn.getUpdateService()
+
+    px_exc = [
+        'AnnotationLinksCountPerOwner',
+        'Channel',
+        'Image',
+        'PixelsFileMapsCountPerOwner',
+        'PixelsType',
+        'PrimaryChannel',
+        'RelatedTo',
+        'Sha1',
+        'SizeC',
+        'SizeT',
+        'SizeX',
+        'SizeY',
+        'SizeZ',
+        ]
+
+    newim = conn.getObject('Image', newim.id)
+    newpx = newim.getPrimaryPixels()
+    copy_set_get(im.getPrimaryPixels()._obj, newpx._obj, exclude=px_exc)
+    newpx = us.saveAndReturnObject(newpx._obj)
+
+    ch_exc = [
+        'AnnotationLinksCountPerOwner',
+        'LogicalChannel',
+        'Pixels',
+        'StatsInfo',
+        ]
+    lc_exc = ['DetectorSettings']
+
+    for c in xrange(sizeC):
+        newim = conn.getObject('Image', newim.id)
+        chsrc = im.getChannels()[c]
+        chdst = newim.getChannels()[c]
+        copy_set_get(chsrc._obj, chdst._obj, exclude=ch_exc)
+        us.saveAndReturnObject(chdst._obj)
+
+        lchsrc = chsrc.getLogicalChannel()
+        lchdst = chdst.getLogicalChannel()
+        copy_set_get(lchsrc._obj, lchdst._obj, exclude=lc_exc)
+        us.saveAndReturnObject(lchdst._obj)
+
     return newim
-
-def copy_logical_channel(src, conn):
-    """
-    Copy and save a logical channel
-    src: The logical channel
-    conn: The connection object, possibly on a different server
-    """
-    dst = omero.model.LogicalChannelI()
-    exc = ['DetectorSettings']
-    copy_set_get(src, dst, exclude=exc)
-    dst = conn.getUpdateService().saveAndReturnObject(dst)
-    return dst
-
-def copy_channel(src, conn):
-    """
-    Copy and save a channel
-    src: The channel
-    conn: The connection object, possibly on a different server
-    """
-    dst = omero.model.ChannelI()
-    exc = ['AnnotationLinksCountPerOwner', 'LogicalChannel', 'Pixels']
-    copy_set_get(src, dst, exclude=exc)
-    dstlc = copy_logical_channel(src.getLogicalChannel(), conn)
-    dst.setLogicalChannel(dstlc)
-    # Currently doesn't work
-    dst = conn.getUpdateService().saveAndReturnObject(dst)
-    return dst
 
