@@ -3,8 +3,10 @@
 import logging
 
 import omero
-from omero.rtypes import wrap
+from omero.rtypes import wrap, unwrap, rstring
 
+from copy_utils import update_obj_map, get_type_id, add_source_to_description
+from copy_tags import create_tags
 
 #logging.basicConfig()
 log = logging.getLogger('OmeroCopy')
@@ -75,6 +77,7 @@ def copy_image_and_metadata(im, conn):
         for p in planes:
             yield p
 
+    d = im.getDescription()
     newim = conn.createImageFromNumpySeq(
         planeGen(), im.getName(), sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT)
 
@@ -131,5 +134,28 @@ def copy_image_and_metadata(im, conn):
         copy_set_get(lchsrc._obj, lchdst._obj, exclude=lc_exc)
         us.saveAndReturnObject(lchdst._obj)
 
+    desc = add_source_to_description(im, im.getDescription())
+    newim.setDescription(rstring(desc))
+    us.saveAndReturnObject(newim._obj)
+
     return newim
+
+
+def copy_tags(im, newim, conn, obj_map):
+    us = conn.getUpdateService()
+    tags = [a for a in im.listAnnotations()
+            if isinstance(a._obj, omero.model.TagAnnotationI)]
+
+    obj_map = update_obj_map(conn, 'TagAnnotation')
+    create_tags(None, conn, tags, obj_map)
+    obj_map = update_obj_map(conn, 'TagAnnotation')
+
+    newim = conn.getObject('Image', newim.id)
+
+    for tag in tags:
+        link = omero.model.ImageAnnotationLinkI()
+        link.setParent(newim._obj)
+        link.setChild(obj_map[get_type_id(tag)]._obj)
+        link = us.saveAndReturnObject(link)
+
 
